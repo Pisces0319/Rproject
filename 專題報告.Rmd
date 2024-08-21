@@ -1,0 +1,204 @@
+---
+title: "專題製作"
+author: "吳忠憲、曾增凱、曾苡嘉"
+date: "2024-08-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### 安裝套件
+```{r}
+require(neuralnet) # for neuralnet(), nn model
+require(nnet)      # for class.ind()
+require(caret)     # for train(), tune parameters
+
+```
+
+https://reurl.cc/0dxArA
+
+#### 載入資料集及資料理解
+
+age：患者的年齡
+
+sex：患者的性別
+
+exang：運動引起的心絞痛（1 = 是；0 = 否）
+
+ca：主要血管數量（0-3），當大血管數量夠多，例如4個，罹患心臟病的可能性就很大爬升，甚至比等於 0 的數字高一點點。)
+
+cp : 胸痛型 胸痛型
+
+    值1：典型心絞痛
+    值2：非典型心絞痛
+    值3：非心絞痛
+    值4：無症狀
+    
+trtbps ：靜止血壓（毫米汞柱）
+
+chol ：透過 BMI 感測器獲取的膽固醇（mg/dl）
+
+
+fbs ：（空腹血糖 > 120 mg/dl）（1 = 正確；0 = 錯誤）
+
+rest_ecg ：靜止心電圖結果
+
+    值 0：正常
+    值 1：ST-T波異常（T波倒置和/或ST抬高或壓低> 0.05 mV）
+    值 2：根據 Estes 標準顯示可能或明確的左心室肥厚
+    
+thalach ：達到的最大心率
+
+
+SLP: 平坦、下斜或凹陷的 ST 段可能表示冠狀動脈缺血。 ST 段抬高可能提示透壁性心肌梗塞
+caa : 指類澱粉(Amyloid)物質沈積在大腦動脈造成的病變
+thall：地中海型貧血
+
+output：0 = 心臟病發作的可能性較小 1 = 心臟病發作的可能性較大
+
+
+
+```{r echo=FALSE}
+heart = read.csv('heart1.csv')
+dim(heart)
+head(heart)
+```
+
+```{r echo=FALSE}
+sapply(heart, function(x) sum(is.na(x)))
+```
+
+#### 數值資料及類別資料區分
+```{r}
+heart_num<-heart[,c("age","trtbps","chol","thalachh","oldpeak")]
+heart_cat <-setdiff(heart,heart_num)
+heart_cat <- as.data.frame(heart_cat)
+
+```
+#### 正規化
+```{r}
+normalize <- function(x) {
+  return((x - min(x)) / (max(x) - min(x)))
+}
+
+# 運用隱式迴圈函數逐欄(含y)正規化後再將等長串列轉為資料框
+heart_norm <- as.data.frame(lapply(heart_num, normalize))
+```
+
+
+#### 資料分割
+
+
+```{r echo=FALSE}
+data <- cbind(heart_cat, heart_norm)
+data$output <- as.factor(data$output)
+# x <- x[-14]
+# y <- heart[,14]
+```
+
+#### 創建訓練集及測試集
+
+```{r echo=FALSE}
+
+set.seed(456)
+
+inTrain <- createDataPartition(data[,9],
+                               p = 0.7,
+                               list = FALSE)
+train <- data[inTrain, ]
+test <- data[-inTrain, ]
+# heart_train_x <- heart_all[inTrain,-9]
+# heart_train_y <- heart_all[inTrain,9]
+# heart_test_x <- heart_all[-inTrain,-9]
+# heart_test_y <- heart_all[-inTrain,9]
+```
+
+#### 分割後資料大小
+```{r}
+cat('x的訓練集：',dim(heart_train_x))
+cat('\nx的測試集：',dim(heart_test_x))
+
+
+```
+
+#### 確認x與y分割是否平衡
+```{r}
+a = table(heart_train_y)
+b = barplot(a,col=rainbow(2),main='Class Distribution',ylim = c(0,120),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'))
+text(x=b,y=a+5,labels = a)
+```
+
+```{r}
+library(Boruta)
+default_br <- Boruta(output ~ ., data = data, doTrace = 2, maxRuns = 250)
+plot(default_br, las = 2, cex.axis = 0.7)
+
+```
+
+
+```{r}
+model_glm = glm(output ~ . , family="binomial", data = train)
+summary(model_glm)
+```
+
+```{r}
+#Baseline Accuracy
+prop.table(table(train$output))
+prop.table(table(test$output))
+```
+```{r}
+# Predictions on the training set
+predictTrain = predict(model_glm, data = train, type = "response")
+
+# Confusion matrix on training data
+table(train$output, predictTrain >= 0.5)
+# (114+268)/nrow(train) #Accuracy - 91%
+
+#Predictions on the test set
+predictTest = predict(model_glm, newdata = test, type = "response")
+
+# Confusion matrix on test set
+table(test$output, predictTest >= 0.5)
+# 158/nrow(test) #Accuracy - 88%
+```
+
+```{r}
+formula.bpn <- output ~ .
+```
+
+
+```{r}
+# tune parameters
+model <- train(form=formula.bpn,     # formula
+               data=train,           # 資料
+               method="neuralnet",   # 類神經網路(bpn)
+               
+               # 最重要的步驟：觀察不同排列組合(第一層1~4個nodes ; 第二層0~4個nodes)
+               # 看何種排列組合(多少隱藏層、每層多少個node)，會有最小的RMSE
+               tuneGrid = expand.grid(.layer1=c(1:8), .layer2=c(1:4), .layer3=c(0)),               
+               
+               # 以下的參數設定，和上面的neuralnet內一樣
+               learningrate = 0.0001,  # learning rate
+               threshold = 0.01,     # partial derivatives of the error function, a stopping criteria
+               stepmax = 5e5         # 最大的iteration數 = 500000(5*10^5)
+               )
+
+```
+
+
+# decision tree
+
+```{R}
+learn_df <- ctree(output ~ ., data = train, controls=ctree_control(maxdepth=5))
+
+pre_df <- predict(learn_df, test[, -9])
+
+cm_ct <- table(round(pre_df), test$output)
+df_acc <- sum(diag(cm_ct)/sum(cm_ct))
+df_acc
+# print(paste("The decision Tree model is", round(df_acc, digits = 4))*100,"%", "accurate")
+
+
+```
