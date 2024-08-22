@@ -7,14 +7,28 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(reticulate)
+use_python("C:\\Users\\USER\\anaconda3")
 ```
 
 #### 安裝套件
 ```{r}
-require(neuralnet) # for neuralnet(), nn model
-require(nnet)      # for class.ind()
-require(caret)     # for train(), tune parameters
-
+library(caret)
+library(ggplot2)
+library(reshape2)
+library(superml)
+library(parsnip)
+library(workflows)
+library(baguette)
+library(tune)
+library(yardstick)
+library(rsample)
+library(tidymodels)
+library(Boruta)
+library(party)
+library(randomForest)
+library(class)
+library(highcharter)
 ```
 
 https://reurl.cc/0dxArA
@@ -61,7 +75,7 @@ output：0 = 心臟病發作的可能性較小 1 = 心臟病發作的可能性�
 
 
 ```{r echo=FALSE}
-heart = read.csv('heart1.csv')
+heart = read.csv('heart.csv')
 dim(heart)
 head(heart)
 ```
@@ -70,6 +84,7 @@ head(heart)
 sapply(heart, function(x) sum(is.na(x)))
 ```
 
+
 #### 數值資料及類別資料區分
 ```{r}
 heart_num<-heart[,c("age","trtbps","chol","thalachh","oldpeak")]
@@ -77,6 +92,8 @@ heart_cat <-setdiff(heart,heart_num)
 heart_cat <- as.data.frame(heart_cat)
 
 ```
+
+
 #### 正規化
 ```{r}
 normalize <- function(x) {
@@ -92,10 +109,10 @@ heart_norm <- as.data.frame(lapply(heart_num, normalize))
 
 
 ```{r echo=FALSE}
-data <- cbind(heart_cat, heart_norm)
-data$output <- as.factor(data$output)
-# x <- x[-14]
-# y <- heart[,14]
+heart_all <- cbind(heart_cat, heart_norm)
+heart_all$output <- as.factor(heart_all$output)
+
+
 ```
 
 #### 創建訓練集及測試集
@@ -104,101 +121,128 @@ data$output <- as.factor(data$output)
 
 set.seed(456)
 
-inTrain <- createDataPartition(data[,9],
+inTrain <- createDataPartition(heart_all[,13],
                                p = 0.7,
                                list = FALSE)
-train <- data[inTrain, ]
-test <- data[-inTrain, ]
-# heart_train_x <- heart_all[inTrain,-9]
-# heart_train_y <- heart_all[inTrain,9]
-# heart_test_x <- heart_all[-inTrain,-9]
-# heart_test_y <- heart_all[-inTrain,9]
+heart_train <- heart_all[inTrain,]
+heart_test <- heart_all[-inTrain,]
 ```
 
 #### 分割後資料大小
 ```{r}
-cat('x的訓練集：',dim(heart_train_x))
-cat('\nx的測試集：',dim(heart_test_x))
+cat('x的訓練集：',dim(heart_train))
+cat('\nx的測試集：',dim(heart_test))
 
 
 ```
 
-#### 確認x與y分割是否平衡
+#### 確認測試集在患有心臟病的人數是否平衡
 ```{r}
-a = table(heart_train_y)
-b = barplot(a,col=rainbow(2),main='Class Distribution',ylim = c(0,120),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'))
+a = table(heart_train$output)
+b = barplot(a,col=rainbow(2),main='Class Distribution',ylim = c(0,130),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'))
 text(x=b,y=a+5,labels = a)
+prop.table(table(heart_train$output))
+```
+#### 確認測試集在患有心臟病的人數是否平衡
+```{r}
+a = table(heart_test$output)
+b = barplot(a,col=rainbow(2),main='Class Distribution',ylim = c(0,130),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'))
+text(x=b,y=a+5,labels = a)
+prop.table(table(heart_test$output))
 ```
 
+
+
+#### 相關分析圖
 ```{r}
-library(Boruta)
-default_br <- Boruta(output ~ ., data = data, doTrace = 2, maxRuns = 250)
-plot(default_br, las = 2, cex.axis = 0.7)
+corrplot::corrplot(cor(heart_train[-9]))
 
 ```
 
 
-```{r}
-model_glm = glm(output ~ . , family="binomial", data = train)
+#### 迴歸模型
+```{R}
+model_glm = glm(output ~ . , family="binomial", data = heart_train)
 summary(model_glm)
-```
-
-```{r}
-#Baseline Accuracy
-prop.table(table(train$output))
-prop.table(table(test$output))
-```
-```{r}
 # Predictions on the training set
-predictTrain = predict(model_glm, data = train, type = "response")
+predictTrain = predict(model_glm, data = heart_train, type = "response")
 
 # Confusion matrix on training data
-table(train$output, predictTrain >= 0.5)
+table(heart_train$output, predictTrain >= 0.5)
 # (114+268)/nrow(train) #Accuracy - 91%
 
 #Predictions on the test set
-predictTest = predict(model_glm, newdata = test, type = "response")
+predictTest = predict(model_glm, newdata = heart_test, type = "response")
 
 # Confusion matrix on test set
-table(test$output, predictTest >= 0.5)
-# 158/nrow(test) #Accuracy - 88%
+table(heart_test$output, predictTest >= 0.5)
+
 ```
 
+
+
+
+#### 決策樹
 ```{r}
-formula.bpn <- output ~ .
+learn_df <- ctree(output ~ ., data = heart_train, controls=ctree_control(maxdepth=7))
+
+pre_df <- predict(learn_df, heart_test[, -9])
+pre_df
+
+cm_ct <- table(round(pre_df), heart_test$output)
+cm_ct
+plot(learn_df,type="simple")
+df_acc <- sum(diag(cm_ct)/sum(cm_ct))
+print(paste0("The decision Tree model is ", round(df_acc, digits = 4)*100,"%", " accurate"))
 ```
 
 
-```{r}
-# tune parameters
-model <- train(form=formula.bpn,     # formula
-               data=train,           # 資料
-               method="neuralnet",   # 類神經網路(bpn)
-               
-               # 最重要的步驟：觀察不同排列組合(第一層1~4個nodes ; 第二層0~4個nodes)
-               # 看何種排列組合(多少隱藏層、每層多少個node)，會有最小的RMSE
-               tuneGrid = expand.grid(.layer1=c(1:8), .layer2=c(1:4), .layer3=c(0)),               
-               
-               # 以下的參數設定，和上面的neuralnet內一樣
-               learningrate = 0.0001,  # learning rate
-               threshold = 0.01,     # partial derivatives of the error function, a stopping criteria
-               stepmax = 5e5         # 最大的iteration數 = 500000(5*10^5)
-               )
-
-```
-
-
-# decision tree
+#### 隨機森林
 
 ```{R}
-learn_df <- ctree(output ~ ., data = train, controls=ctree_control(maxdepth=5))
+learn_rf <- randomForest(output~.,data=heart_train,ntree=300,proximity=TRUE,importance=TRUE)
+pre_rf <-predict(learn_rf,heart_test[,-9])
+cm_rf <- confusionMatrix(pre_rf,heart_test$output)
+cm_rf
+```
 
-pre_df <- predict(learn_df, test[, -9])
+### KNN
 
-cm_ct <- table(round(pre_df), test$output)
-df_acc <- sum(diag(cm_ct)/sum(cm_ct))
-df_acc
-# print(paste("The decision Tree model is", round(df_acc, digits = 4))*100,"%", "accurate")
+```{R}
+acc_test <- NULL
+set.seed(456)
+for (i in 1:15){
+  predict <-knn(train=heart_train[,-9],test=heart_test[,-9],cl=heart_train[,9],k=i,prob=TRUE)
+  acc_test <- c(acc_test,mean(predict==heart_test[,9]))
+}
+acc <- data.frame(k = seq(1,15),cnt=acc_test)
+opt_k <-subset(acc,cnt==max(cnt))[1,]
+sub <-paste0("Optimal number of k is ",opt_k$k," (accuracy :", opt_k$cnt," ) in KNN")
+hchart(acc,'line',hcaes(k,cnt)) |>
+  hc_title(text='Accuracy With Varying K (KNN)')|>
+  hc_subtitle(text = sub) |>
+  hc_add_theme(hc_theme_google())|>
+  hc_xAxis(title=list(text = 'Numer of Neighbors(k)')) |>
+  hc_yAxis(title=list(text = 'Accuracy'))
+
+```
+
+
+
+#### 特徵選擇(Boruta)
+1. 綠色顯示選定的變量
+2. 紅色表示拒絕的變量
+3. 藍色為判斷基準的變量
+4. 黃色（如果有的話）表示 Boruta 尚未決定該變量。
+
+
+
+```{R}
+
+default_br <- Boruta(output ~ ., data = heart_all, doTrace = 2, maxRuns = 250)
+plot(default_br, las = 2, cex.axis = 0.7)
+# 查看結果摘要
+print(default_br)
 
 
 ```
