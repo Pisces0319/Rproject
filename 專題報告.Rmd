@@ -1,98 +1,137 @@
 ---
-title: "專題製作"
+title: "利用R語言建構預測模型-以心臟病發作之狀態為例"
 author: "吳忠憲、曾增凱、曾苡嘉"
 date: "2024-08-12"
 output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-library(reticulate)
-use_python("C:\\Users\\USER\\anaconda3")
+knitr::opts_chunk$set(warning=FALSE,message = FALSE)
+
 ```
 
 #### 安裝套件
-```{r}
+```{r }
 library(caret)
+library(showtext)
 library(ggplot2)
-library(reshape2)
-library(superml)
-library(parsnip)
-library(workflows)
-library(baguette)
-library(tune)
-library(yardstick)
-library(rsample)
-library(tidymodels)
 library(Boruta)
 library(party)
 library(randomForest)
 library(class)
 library(highcharter)
+library(e1071)
+library(SciViews)
 ```
 
 https://reurl.cc/0dxArA
 
 #### 載入資料集及資料理解
-
-age：患者的年齡
-
-sex：患者的性別
-
-exang：運動引起的心絞痛（1 = 是；0 = 否）
-
-ca：主要血管數量（0-3），當大血管數量夠多，例如4個，罹患心臟病的可能性就很大爬升，甚至比等於 0 的數字高一點點。)
-
-cp : 胸痛型 胸痛型
-
-    值1：典型心絞痛
-    值2：非典型心絞痛
-    值3：非心絞痛
-    值4：無症狀
-    
-trtbps ：靜止血壓（毫米汞柱）
-
-chol ：透過 BMI 感測器獲取的膽固醇（mg/dl）
+|名稱|描述|類型|意義|
+|----|----|----|----|
+|Age|年齡|數值型|年齡是心臟病的風險因素之一。隨著年齡增長，心臟病的風險也會增加。|
+|Sex|性別|類別型（通常為 0 和 1，其中 0 代表女性，1 代表男性）|性別也會影響心臟病的風險。例如，男性在某些年齡段的心臟病風險通常高於女性。|
+|cp|胸痛類型|類別型（通常有 4 個類別，如 1: 胸痛，2: 壓迫感，3: 針刺感，4: 不適感）|胸痛是心臟病的一個重要症狀，不同類型的胸痛可能指示不同類型的心臟病。|
+|trtbps|靜息血壓|數值型（以 mmHg 為單位）|靜息血壓升高可能是心臟病的風險因素之一。|
+|chol|血清膽固醇|數值型（以 mg/dl 為單位）|高膽固醇水平與心臟病風險增加相關。|
+|fbs|空腹血糖|類別型（0 或 1，其中 1 表示空腹血糖 > 120 mg/dl）|高空腹血糖水平可能與糖尿病相關，糖尿病是一個心臟病風險因素。|
+|restecg|靜態心電圖結果|類別型（通常有 3 個類別，如 0: 正常，1: ST-T 波異常，2: 左心室肥厚）|心電圖的異常結果可以幫助診斷心臟病。|
+|thalachh|最大心率|數值型|最大心率在運動時的測量值，低心率可能與心臟病風險增加相關。|
+|exng|運動誘發的心絞痛|類別型（0 或 1，其中 1 表示有心絞痛）|運動誘發的心絞痛是一個心臟病的症狀。|
+|oldpeak|運動引起的 ST 段抑制|數值型（通常是負數，表示 ST 段的下凹）|ST 段抑制可能是心臟病的指示。|
+|slp|峰值運動 ST 段的斜率|類別型（通常有 3 個類別，如 1: 上升，2: 平坦，3: 下凹）|ST 段斜率可以幫助評估心臟病的嚴重程度。|
+|caa|冠狀動脈擴張的數量（通過造影顯示）|數值型（0 到 3 之間的數字）|較多的血管問題可能表示心臟病的風險更高。|
+|thall|地中海貧血（影響血液中的紅血球）|類別型（通常有 3 個類別，如 1: 正常，2: 固定缺失，3: 可逆缺失）|地中海貧血的類型可以影響心臟病的診斷。|
+|output|心臟病的存在與否|類別型（0 或 1，其中 1 表示存在心臟病）|目標變量，用來表示患者是否被診斷為心臟病。|
 
 
-fbs ：（空腹血糖 > 120 mg/dl）（1 = 正確；0 = 錯誤）
-
-rest_ecg ：靜止心電圖結果
-
-    值 0：正常
-    值 1：ST-T波異常（T波倒置和/或ST抬高或壓低> 0.05 mV）
-    值 2：根據 Estes 標準顯示可能或明確的左心室肥厚
-    
-thalach ：達到的最大心率
-
-
-SLP: 平坦、下斜或凹陷的 ST 段可能表示冠狀動脈缺血。 ST 段抬高可能提示透壁性心肌梗塞
-caa : 指類澱粉(Amyloid)物質沈積在大腦動脈造成的病變
-thall：地中海型貧血
-
-output：0 = 心臟病發作的可能性較小 1 = 心臟病發作的可能性較大
-
-
-
-```{r echo=FALSE}
+```{r }
+getwd()
 heart = read.csv('heart.csv')
 dim(heart)
 head(heart)
 ```
 
-```{r echo=FALSE}
+```{r }
 sapply(heart, function(x) sum(is.na(x)))
 ```
 
 
 #### 數值資料及類別資料區分
-```{r}
-heart_num<-heart[,c("age","trtbps","chol","thalachh","oldpeak")]
+```{r }
+heart_num<-heart[,c("age","trtbps","chol","thalachh","oldpeak","caa")]
 heart_cat <-setdiff(heart,heart_num)
 heart_cat <- as.data.frame(heart_cat)
 
 ```
 
+#### 盒鬚圖
+```{R}
+par(mfrow=c(2,3), bg = "#F0F0F0")
+
+
+tmp <- boxplot(heart_num$age, main="年齡", horizontal=F, col=	"#CF9E9E")
+text(y=tmp$stats, labels=round(tmp$stats, 2), col = "#007979", x=1.3, cex=1.2, font=2)
+
+
+tmp <- boxplot(heart_num$trtbps, main="血壓", horizontal=F, col="#CF9E9E")
+text(y=tmp$stats, labels=round(tmp$stats, 2), col = "#007979", x=1.3, cex=1.0, font=2)
+
+
+tmp <- boxplot(heart_num$chol, main="膽固醇", horizontal=F, col="#CF9E9E")
+text(y=tmp$stats, labels=round(tmp$stats, 2), col = "#007979", x=1.3, cex=0.8, font=2)
+
+
+tmp <- boxplot(heart_num$thalachh, main="最大心率", horizontal=F, col="#CF9E9E")
+text(y=tmp$stats, labels=round(tmp$stats, 2), col = "#007979", x=1.3, cex=1.0, font=2)
+
+tmp <- boxplot(heart_num$oldpeak, main="運動後的心電圖指數", horizontal=F, col="#CF9E9E")
+text(y=tmp$stats, labels=round(tmp$stats, 2), col = "#007979", x=1.3, cex=1.0, font=2)
+
+tmp <- boxplot(heart_num$caa, main="冠狀動脈擴張數量", horizontal=F, col="#CF9E9E")
+text(y=tmp$stats, labels=round(tmp$stats, 2), col = "#007979", x=1.3, cex=1.0, font=2)
+```
+
+
+#### 類別變數之長條圖
+```{R}
+showtext_auto(enable = TRUE)
+par(mfrow=c(2,4))
+barplot(table(heart_cat$sex), main = "性別", col = c("#C4E1FF"))
+barplot(table(heart_cat$cp), main = "胸痛類型", col = c("#C4E1FF"))
+barplot(table(heart_cat$fbs), main = "空腹血糖狀況", col = c("#C4E1FF"))
+barplot(table(heart_cat$restecg), main = "靜態心電圖結果", col = c("#C4E1FF"))
+barplot(table(heart_cat$exng), main = "運動後心絞痛情況", col = c("#C4E1FF"))
+barplot(table(heart_cat$slp), main = "心電圖ST段斜率的類別", col = c("#C4E1FF"))
+barplot(table(heart_cat$thall), main = "地中海貧血類型", col = c("#C4E1FF"))
+
+```
+
+
+#### 數值變數之散佈圖
+```{R }
+# diag.panel=panel.hist
+# upper.panel=panel.cor
+# plot(heart_num,main='數值變數之散佈圖')
+
+pairs(heart_num, 
+      lower.panel = panel.cor,  # 上三角顯示相關係數
+      diag.panel = panel.hist)  # 對角線顯示盒鬚圖
+```
+
+#### 相關分析圖
+```{r}
+corrplot::corrplot(cor(heart[-8]))
+
+```
+
+
+
+<!-- ####小提琴圖 -->
+<!-- ```{R} -->
+<!-- ggplot(heart, aes(x = factor(cp), y = thalachh)) + geom_violin() + ggtitle("Violin Plot of cp and thalachh") -->
+
+<!-- ``` -->
 
 #### 正規化
 ```{r}
@@ -102,22 +141,17 @@ normalize <- function(x) {
 
 # 運用隱式迴圈函數逐欄(含y)正規化後再將等長串列轉為資料框
 heart_norm <- as.data.frame(lapply(heart_num, normalize))
-```
 
-
-#### 資料分割
-
-
-```{r echo=FALSE}
 heart_all <- cbind(heart_cat, heart_norm)
 heart_all$output <- as.factor(heart_all$output)
 
 
 ```
 
+
 #### 創建訓練集及測試集
 
-```{r echo=FALSE}
+```{r}
 
 set.seed(456)
 
@@ -130,33 +164,25 @@ heart_test <- heart_all[-inTrain,]
 
 #### 分割後資料大小
 ```{r}
-cat('x的訓練集：',dim(heart_train))
-cat('\nx的測試集：',dim(heart_test))
+cat('訓練集：',dim(heart_train))
+cat('\n測試集：',dim(heart_test))
 
 
 ```
 
-#### 確認測試集在患有心臟病的人數是否平衡
+#### 確認訓練集在患有心臟病的人數是否平衡
 ```{r}
 a = table(heart_train$output)
-b = barplot(a,col=rainbow(2),main='Class Distribution',ylim = c(0,130),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'))
+b = barplot(a,col=c("lightcoral","#BBFFBB"),main='Class Distribution',ylim = c(0,130),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'))
 text(x=b,y=a+5,labels = a)
-prop.table(table(heart_train$output))
+# prop.table(table(heart_train$output))
 ```
 #### 確認測試集在患有心臟病的人數是否平衡
 ```{r}
 a = table(heart_test$output)
-b = barplot(a,col=rainbow(2),main='Class Distribution',ylim = c(0,130),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'))
+b = barplot(a,col=c("lightcoral","#BBFFBB"),main='Class Distribution',ylim = c(0,130),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'))
 text(x=b,y=a+5,labels = a)
-prop.table(table(heart_test$output))
-```
-
-
-
-#### 相關分析圖
-```{r}
-corrplot::corrplot(cor(heart_train[-9]))
-
+# prop.table(table(heart_test$output))
 ```
 
 
@@ -175,8 +201,11 @@ table(heart_train$output, predictTrain >= 0.5)
 predictTest = predict(model_glm, newdata = heart_test, type = "response")
 
 # Confusion matrix on test set
-table(heart_test$output, predictTest >= 0.5)
-
+#table(heart_test$output, predictTest >= 0.5)
+pre_lr <- ifelse(predictTest>=0.5,1,0)
+pre_lm <- as.factor(pre_lr)
+cm_lr <- confusionMatrix(pre_lm,heart_test$output)
+cm_lr
 ```
 
 
@@ -185,23 +214,20 @@ table(heart_test$output, predictTest >= 0.5)
 #### 決策樹
 ```{r}
 learn_df <- ctree(output ~ ., data = heart_train, controls=ctree_control(maxdepth=7))
+pre_df <- predict(learn_df, heart_test[, -8])
 
-pre_df <- predict(learn_df, heart_test[, -9])
-pre_df
-
-cm_ct <- table(round(pre_df), heart_test$output)
+cm_ct <- confusionMatrix(pre_df,heart_test$output)
 cm_ct
 plot(learn_df,type="simple")
-df_acc <- sum(diag(cm_ct)/sum(cm_ct))
-print(paste0("The decision Tree model is ", round(df_acc, digits = 4)*100,"%", " accurate"))
+
 ```
 
 
 #### 隨機森林
 
-```{R}
+```{R} 
 learn_rf <- randomForest(output~.,data=heart_train,ntree=300,proximity=TRUE,importance=TRUE)
-pre_rf <-predict(learn_rf,heart_test[,-9])
+pre_rf <-predict(learn_rf,heart_test[,-8])
 cm_rf <- confusionMatrix(pre_rf,heart_test$output)
 cm_rf
 ```
@@ -212,8 +238,8 @@ cm_rf
 acc_test <- NULL
 set.seed(456)
 for (i in 1:15){
-  predict <-knn(train=heart_train[,-9],test=heart_test[,-9],cl=heart_train[,9],k=i,prob=TRUE)
-  acc_test <- c(acc_test,mean(predict==heart_test[,9]))
+  predict <-knn(train=heart_train[,-8],test=heart_test[,-8],cl=heart_train[,8],k=i,prob=TRUE)
+  acc_test <- c(acc_test,mean(predict==heart_test[,8]))
 }
 acc <- data.frame(k = seq(1,15),cnt=acc_test)
 opt_k <-subset(acc,cnt==max(cnt))[1,]
@@ -225,6 +251,38 @@ hchart(acc,'line',hcaes(k,cnt)) |>
   hc_xAxis(title=list(text = 'Numer of Neighbors(k)')) |>
   hc_yAxis(title=list(text = 'Accuracy'))
 
+
+pre_knn <- knn(train = heart_train[,-8],test = heart_test[,-8],cl=heart_train[,8],k=opt_k$k,prob = TRUE)
+cm_knn <- confusionMatrix(pre_knn,heart_test$output)
+cm_knn
+
+```
+
+#### 支援向量機
+```{R}
+
+learn_svm <- svm(output~.,data=heart_train)
+pre_svm <- predict(learn_svm,heart_test[-8])
+cm_svm <- confusionMatrix(pre_svm,heart_test$output)
+cm_svm
+```
+
+#### 各模型混淆矩陣比較
+```{R}
+col <-c("#FFD2D2", "#CECEFF")
+par(mfrow=c(2,3),cex.main=0.2)
+fourfoldplot(cm_lr$table, color = col, conf.level = 0, margin = 1,main=paste("迴歸(",round(cm_lr$overall[1]*100),"%)",sep=""))
+
+fourfoldplot(cm_ct$table, color = col, conf.level = 0, margin = 1, main=paste("決策樹(",round(cm_ct$overall[1]*100),"%)",sep=""))
+
+fourfoldplot(cm_rf$table, color = col, conf.level = 0, margin = 1, main=paste("隨機森林(",round(cm_rf$overall[1]*100),"%)",sep=""))
+
+fourfoldplot(cm_knn$table, color = col, conf.level = 0, margin = 1, main=paste("KNN (",round(cm_knn$overall[1]*100), "%)",sep=""))
+
+fourfoldplot(cm_svm$table, color = col, conf.level = 0, margin = 1, main=paste("SVM(",round(cm_svm$overall[1]*100),"%)", sep=""))
+
+
+
 ```
 
 
@@ -235,8 +293,6 @@ hchart(acc,'line',hcaes(k,cnt)) |>
 3. 藍色為判斷基準的變量
 4. 黃色（如果有的話）表示 Boruta 尚未決定該變量。
 
-
-
 ```{R}
 
 default_br <- Boruta(output ~ ., data = heart_all, doTrace = 2, maxRuns = 250)
@@ -246,3 +302,52 @@ print(default_br)
 
 
 ```
+
+
+
+```{R}
+library(tidyverse)
+library(neuralnet)
+
+```
+
+
+```{R}
+iris <- iris %>% mutate_if(is.character, as.factor)
+
+set.seed(245)
+data_rows <- floor(0.80 * nrow(iris))
+train_indices <- sample(c(1:nrow(iris)), data_rows)
+train_data <- iris[train_indices,]
+test_data <- iris[-train_indices,]
+
+```
+
+```{R}
+model = neuralnet(
+    output~.,
+    data=heart_train,
+    hidden=c(8,4,2),
+    threshold = 0.001,
+    stepmax = 3000,
+    linear.output = FALSE,
+    act.fct = "logistic"
+)
+
+```
+
+```{R}
+plot(model,rep = "best")
+```
+
+```{R}
+pred <- predict(model, heart_test)
+labels <- c("0", "1")
+prediction_label <- data.frame(max.col(pred)) %>%     
+mutate(pred=labels[max.col.pred.]) %>%
+select(2) %>%
+unlist()
+
+table(heart_test$output, prediction_label)
+```
+
