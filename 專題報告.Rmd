@@ -7,7 +7,8 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(warning=FALSE,message = FALSE)
-
+library(reticulate)
+use_python("/opt/homebrew/bin/python3")
 ```
 
 #### 安裝套件
@@ -22,6 +23,12 @@ library(class)
 library(highcharter)
 library(e1071)
 library(SciViews)
+library(png)
+library(magick)
+library(tidyverse)
+library(neuralnet)
+library(keras)
+library(tensorflow)
 ```
 
 https://reurl.cc/0dxArA
@@ -60,7 +67,7 @@ sapply(heart, function(x) sum(is.na(x)))
 #### 數值資料及類別資料區分
 ```{r }
 heart_num<-heart[,c("age","trtbps","chol","thalachh","oldpeak","caa")]
-heart_cat <-setdiff(heart,heart_num)
+heart_cat <- heart[,-c(1,4,5,8,10,12)]
 heart_cat <- as.data.frame(heart_cat)
 
 ```
@@ -95,8 +102,9 @@ text(y=tmp$stats, labels=round(tmp$stats, 2), col = "#007979", x=1.3, cex=1.0, f
 
 #### 類別變數之長條圖
 ```{R}
+# 
 showtext_auto(enable = TRUE)
-par(mfrow=c(2,4))
+par(mfrow=c(2,4),cex.main=2)
 barplot(table(heart_cat$sex), main = "性別", col = c("#C4E1FF"))
 barplot(table(heart_cat$cp), main = "胸痛類型", col = c("#C4E1FF"))
 barplot(table(heart_cat$fbs), main = "空腹血糖狀況", col = c("#C4E1FF"))
@@ -173,52 +181,140 @@ cat('\n測試集：',dim(heart_test))
 #### 確認訓練集在患有心臟病的人數是否平衡
 ```{r}
 a = table(heart_train$output)
-b = barplot(a,col=c("lightcoral","#BBFFBB"),main='Class Distribution',ylim = c(0,130),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'))
-text(x=b,y=a+5,labels = a)
-# prop.table(table(heart_train$output))
+b = barplot(a,col=c("lightcoral","#BBFFBB"),main='Class Distribution',ylim = c(0,130),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'),cex.names = 2,cex.axis = 2,cex.lab=2,cex.main=2)
+text(x=b,y=a+6,labels = a,cex = 2)
 ```
+
 #### 確認測試集在患有心臟病的人數是否平衡
+
 ```{r}
 a = table(heart_test$output)
-b = barplot(a,col=c("lightcoral","#BBFFBB"),main='Class Distribution',ylim = c(0,130),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'))
-text(x=b,y=a+5,labels = a)
-# prop.table(table(heart_test$output))
+b = barplot(a,col=c("lightcoral","#BBFFBB"),main='Class Distribution',ylim = c(0,60),ylab = '樣本數量',xlab = '是否患有心臟病',names.arg = c('無','有'),cex.names = 2,cex.axis = 2,cex.lab=2,cex.main=2)
+text(x=b,y=a+6,labels = a,cex = 2)
 ```
 
 
 #### 迴歸模型
+
 ```{R}
-model_glm = glm(output ~ . , family="binomial", data = heart_train)
+
+train_control <- trainControl(method = "cv", number = 10)
+
+model_glm <- caret::train(output ~ ., 
+               data = heart_train, 
+               method = "glm", 
+               family = binomial,
+               trControl = train_control)
+
+print(model_glm)
 summary(model_glm)
-# Predictions on the training set
-predictTrain = predict(model_glm, data = heart_train, type = "response")
 
-# Confusion matrix on training data
-table(heart_train$output, predictTrain >= 0.5)
-# (114+268)/nrow(train) #Accuracy - 91%
+predictTrain = predict(model_glm, data = heart_train, type = "prob")
 
-#Predictions on the test set
-predictTest = predict(model_glm, newdata = heart_test, type = "response")
+print(predictTrain)
+table(heart_train$output, ifelse(predictTrain[1]>predictTrain[2], 0, 1))
 
-# Confusion matrix on test set
-#table(heart_test$output, predictTest >= 0.5)
-pre_lr <- ifelse(predictTest>=0.5,1,0)
+predictTest = predict(model_glm, newdata = heart_test, type = "prob")
+
+pre_lr <- ifelse(predictTest[1]>predictTest[2], 0, 1)
 pre_lm <- as.factor(pre_lr)
 cm_lr <- confusionMatrix(pre_lm,heart_test$output)
 cm_lr
 ```
 
+```{R, eval = FALSE}
+library(mlr3)
+library(mlr3tuning)
+library(mlr3learners)
+library(paradox)
 
+task <- TaskClassif$new(id = "heart", backend = heart_train, target = "output")
+learner <- lrn("classif.rpart")
+
+param_set <- ps(
+  mincriterion = p_dbl(lower = 0.8, upper = 0.99, logscale = TRUE)
+)
+evals <- trm("evals", n_evals = 20)
+resampling <- rsmp("cv", folds = 10)  # 使用交叉驗證
+measure <- msr("classif.ctree")
+
+instance = TuningInstanceBatchSingleCrit$new(
+  task = task,
+  learner = learner,
+  resampling = resampling,
+  search_space = param_set,
+  measure = measure,
+  terminator = evals
+)
+
+tuner = tnr("random_search")  # 可以選擇不同的調參器，例如隨機搜尋
+
+tuner$optimize(instance)
+print(instance$result)
+best_params <- instance$result_learner_param_vals
+print(best_params)
+
+
+```
+
+```{R, eval = FALSE}
+# 使用最佳模型進行預測
+learner$param_set$values <- instance$result$learner_param_vals
+learner$param_set$values <- list(mincriterion = 0.8587019)
+learner$train(task)
+
+
+# 測試資料集進行預測
+predictions <- learner$predict_newdata(heart_test)
+
+# 繪製混淆矩陣
+library(caret)
+confusionMatrix(predictions$response, heart_test$output)
+
+```
 
 
 #### 決策樹
 ```{r}
-learn_df <- ctree(output ~ ., data = heart_train, controls=ctree_control(maxdepth=7))
+
+print(heart_test$output)
+
+library(party)
+grid <- expand.grid(mincriterion = c(0.8, 0.9, 0.95))
+
+train_control <- caret::trainControl(method = "cv", number = 10, search = "grid")
+
+
+# 進行網格搜索
+model <- caret::train(as.factor(output) ~ ., data = heart_train, method = "ctree",trControl = train_control, tuneGrid = grid)
+
+# 查看最佳參數組合
+print(model$bestTune)
+
+
+# 使用最佳参数进行预测
+
+
+
+learn_df <- randomForest(output ~ ., data = heart_train, controls=ctree_control(maxdepth=7, mincriterion = 0.95))
 pre_df <- predict(learn_df, heart_test[, -8])
 
 cm_ct <- confusionMatrix(pre_df,heart_test$output)
 cm_ct
 plot(learn_df,type="simple")
+
+fourfoldplot(cm_ct$table, color = c("#FF6666", "#66B2FF"), conf.level = 0, margin = 1)
+
+
+predictions <- predict(model, heart_test[, -8])
+
+# 查看混淆矩阵
+conf_matrix <- caret::confusionMatrix(predictions, heart_test$output)
+print(conf_matrix)
+
+# 绘制混淆矩阵
+library(ggplot2)
+fourfoldplot(conf_matrix$table, color = c("#FF6666", "#66B2FF"), conf.level = 0, margin = 1)
 
 ```
 
@@ -237,11 +333,11 @@ cm_rf
 ```{R}
 acc_test <- NULL
 set.seed(456)
-for (i in 1:15){
+for (i in 1:10){
   predict <-knn(train=heart_train[,-8],test=heart_test[,-8],cl=heart_train[,8],k=i,prob=TRUE)
   acc_test <- c(acc_test,mean(predict==heart_test[,8]))
 }
-acc <- data.frame(k = seq(1,15),cnt=acc_test)
+acc <- data.frame(k = seq(1,10),cnt=acc_test)
 opt_k <-subset(acc,cnt==max(cnt))[1,]
 sub <-paste0("Optimal number of k is ",opt_k$k," (accuracy :", opt_k$cnt," ) in KNN")
 hchart(acc,'line',hcaes(k,cnt)) |>
@@ -261,10 +357,176 @@ cm_knn
 #### 支援向量機
 ```{R}
 
-learn_svm <- svm(output~.,data=heart_train)
-pre_svm <- predict(learn_svm,heart_test[-8])
+library(e1071)
+
+set.seed(456)
+# 加載並準備數據集
+
+# 定義參數調整範圍
+# 在這裡，gamma 只適用於徑向基核 (RBF)
+tune_result <- tune.svm(output ~ .,  # 使用公式接口
+                        data = heart_train,  # 數據集
+                        kernel = "radial",  # 使用 RBF 核函數
+                        cost = 10^(-1:2),  # 調整 cost 參數
+                        gamma = 10^(-2:1))  # 調整 gamma 參數
+
+# 顯示最佳參數組合和性能
+# print(tune_result)
+
+# 提取最佳模型
+best_model <- tune_result$best.model
+# summary(best_model)
+
+pre_svm <- predict(best_model, heart_test[-8])
 cm_svm <- confusionMatrix(pre_svm,heart_test$output)
 cm_svm
+
+
+# learn_svm <- svm(output~.,data=heart_train)
+# pre_svm <- predict(learn_svm,heart_test[-8])
+# cm_svm <- confusionMatrix(pre_svm,heart_test$output)
+# cm_svm
+```
+```{R}
+# 定義 R² 指標
+r_squared <- function(y_true, y_pred) {
+  ss_res <- sum((y_true - y_pred) ^ 2)
+  ss_tot <- sum((y_true - mean(y_true)) ^ 2)
+  1 - ss_res / ss_tot
+}
+
+# 自定義 keras 指標
+r_squared_metric <- custom_metric("r_squared", function(y_true, y_pred) {
+  r_squared(y_true, y_pred)
+})
+
+
+
+```
+#### 
+
+```{R }
+
+tf$random$set_seed(123)
+
+x_train <- heart_train[-8]
+y_train <- heart_train[8]
+length(x_train)
+
+model <- keras_model_sequential()
+
+model %>%
+  layer_dense(units = 32, input_shape = c(13), kernel_regularizer=regularizer_l2(0.01), activation = 'relu') %>%  
+  layer_dropout(rate = 0.2) %>% 
+  layer_dense(units = 16, input_shape = c(13), kernel_regularizer=regularizer_l2(0.01), activation = 'relu') %>%  
+  layer_dropout(rate = 0.2) %>% 
+  layer_dense(units = 1, activation = 'sigmoid')  
+
+# 編譯模型並設置優化器
+model %>% compile(
+  optimizer = optimizer_adam(learning_rate = 0.001),  # 使用 Adam 優化器，學習率為 0.001
+  loss = 'mean_squared_error',       # 損失函數
+  metrics = list(r_squared_metric)                 # 評估指標
+)
+x_train <- as.matrix(x_train)
+y_train <- as.matrix(y_train)
+y_train <- as.numeric(y_train)
+y_train <- as.matrix(y_train)
+#訓練模型
+history <- model |>
+  fit(x_train, y_train,                # 訓練數據
+  epochs = 500,                     # 訓練的回合數
+  batch_size = 16,                # 批次大小
+  validation_split = 0.30           # 20% 的數據用於驗證
+)
+
+
+
+
+
+```
+#### 繪圖
+```{R}
+
+# 獲取損失值
+loss_values <- history$metrics$loss
+val_loss_values <- history$metrics$val_loss
+epochs <- 1:length(loss_values)
+
+# 創建數據框
+df <- data.frame(
+  epoch = epochs,
+  loss = loss_values,
+  val_loss = val_loss_values
+)
+
+# 繪製損失值圖表
+p <- ggplot(df, aes(x = epoch)) +
+  geom_line(aes(y = loss, color = 'Training Loss')) +
+  geom_line(aes(y = val_loss, color = 'Validation Loss')) +
+  labs(title = 'Model Loss',
+       x = 'Epoch',
+       y = 'Loss') +
+  scale_color_manual(values = c('Training Loss' = 'blue', 'Validation Loss' = 'red')) +
+  theme_minimal()
+
+# 顯示圖表
+print(p)
+
+# # 保存圖表為 PNG 文件
+# ggsave("model_loss.png", plot = p)
+
+# 獲取 R² 值
+train_r_squared <- history$metrics$r_squared
+val_r_squared <- history$metrics$val_r_squared
+epochs <- 1:length(train_r_squared)
+
+# 創建數據框
+df <- data.frame(
+  epoch = epochs,
+  train_r_squared = train_r_squared,
+  val_r_squared = val_r_squared
+)
+
+# 繪製 R² 圖表
+p <- ggplot(df, aes(x = epoch)) +
+  geom_line(aes(y = train_r_squared, color = 'Training R²')) +
+  geom_line(aes(y = val_r_squared, color = 'Validation R²')) +
+  labs(title = 'Model R²',
+       x = 'Epoch',
+       y = 'R²') +
+  scale_color_manual(values = c('Training R²' = 'blue', 'Validation R²' = 'red')) +
+  theme_minimal()
+
+# 顯示圖表
+print(p)
+
+```
+
+
+
+
+#### 測試集
+
+```{r}
+x_test <- heart_test[-8]
+y_test <- heart_test[8]
+x_test <- as.matrix(x_test)
+y_test <- as.matrix(y_test)
+y_test <- as.numeric(y_test)
+y_test <- as.matrix(y_test)
+# 使用測試資料集進行預測
+predictions <- model %>% predict(x_test)
+
+# 將預測的概率轉換為類別標籤
+predicted_labels <- ifelse(predictions > 0.5, 1, 0)
+
+# 計算準確率
+accuracy <- mean(predicted_labels == y_test)
+print(paste("測試集準確率:", accuracy))
+
+# 生成混淆矩陣
+confusionMatrix(factor(predicted_labels), factor(y_test))
 ```
 
 #### 各模型混淆矩陣比較
@@ -296,58 +558,128 @@ fourfoldplot(cm_svm$table, color = col, conf.level = 0, margin = 1, main=paste("
 ```{R}
 
 default_br <- Boruta(output ~ ., data = heart_all, doTrace = 2, maxRuns = 250)
-plot(default_br, las = 2, cex.axis = 0.7)
+plot(default_br, las = 2, cex.axis = 2,cex.lab = 2)
 # 查看結果摘要
 print(default_br)
 
 
 ```
 
+#### 選擇綠色的變量
+```{R}
+heart_all_br <- heart_all[c(-3,-4,-10,-11)]
+heart_train_br <- heart_all_br[inTrain,]
+heart_test_br <- heart_all_br[-inTrain,]
 
+```
+
+#### 迴歸模型
 
 ```{R}
-library(tidyverse)
-library(neuralnet)
+model_glm = glm(output ~ . , family="binomial", data = heart_train_br)
+summary(model_glm)
+# Predictions on the training set
+predictTrain = predict(model_glm, data = heart_train_br, type = "response")
+
+# Confusion matrix on training data
+#table(heart_train_br$output, predictTrain >= 0.5)
+# (114+268)/nrow(train) #Accuracy - 91%
+
+#Predictions on the test set
+predictTest = predict(model_glm, newdata = heart_test_br, type = "response")
+
+# Confusion matrix on test set
+#table(heart_test$output, predictTest >= 0.5)
+pre_lr <- ifelse(predictTest>=0.5,1,0)
+pre_lm <- as.factor(pre_lr)
+cm_lr <- confusionMatrix(pre_lm,heart_test_br$output)
+cm_lr
+```
+
+
+#### 決策樹
+```{r}
+learn_df <- ctree(output ~ ., data = heart_train_br, controls=ctree_control(maxdepth=7))
+pre_df <- predict(learn_df, heart_test_br[, -6])
+
+cm_ct <- confusionMatrix(pre_df,heart_test_br$output)
+cm_ct
+plot(learn_df,type="simple")
+
+```
+
+#### 隨機森林
+
+```{R} 
+learn_rf <- randomForest(output~.,data=heart_train_br,ntree=300,proximity=TRUE,importance=TRUE)
+pre_rf <-predict(learn_rf,heart_test_br[,-6])
+cm_rf <- confusionMatrix(pre_rf,heart_test_br$output)
+cm_rf
+```
+
+
+### KNN
+
+```{R}
+acc_test <- NULL
+set.seed(456)
+for (i in 1:15){
+  predict <-knn(train=heart_train_br[,-6],test=heart_test_br[,-6],cl=heart_train_br[,6],k=i,prob=TRUE)
+  acc_test <- c(acc_test,mean(predict==heart_test_br[,6]))
+}
+acc <- data.frame(k = seq(1,15),cnt=acc_test)
+opt_k <-subset(acc,cnt==max(cnt))[1,]
+sub <-paste0("Optimal number of k is ",opt_k$k," (accuracy :", opt_k$cnt," ) in KNN")
+hchart(acc,'line',hcaes(k,cnt)) |>
+  hc_title(text='Accuracy With Varying K (KNN)')|>
+  hc_subtitle(text = sub) |>
+  hc_add_theme(hc_theme_google())|>
+  hc_xAxis(title=list(text = 'Numer of Neighbors(k)')) |>
+  hc_yAxis(title=list(text = 'Accuracy'))
+
+
+pre_knn <- knn(train = heart_train_br[,-6],test = heart_test_br[,-6],cl=heart_train_br[,6],k=opt_k$k,prob = TRUE)
+cm_knn <- confusionMatrix(pre_knn,heart_test_br$output)
+cm_knn
 
 ```
 
 
+#### 支援向量機
 ```{R}
-iris <- iris %>% mutate_if(is.character, as.factor)
 
-set.seed(245)
-data_rows <- floor(0.80 * nrow(iris))
-train_indices <- sample(c(1:nrow(iris)), data_rows)
-train_data <- iris[train_indices,]
-test_data <- iris[-train_indices,]
+learn_svm <- svm(output~.,data=heart_train_br)
+pre_svm <- predict(learn_svm,heart_test_br[-6])
+cm_svm <- confusionMatrix(pre_svm,heart_test_br$output)
+cm_svm
+```
+
+
+####
+
+```{R}
+
 
 ```
 
+
+#### 各模型混淆矩陣比較
 ```{R}
-model = neuralnet(
-    output~.,
-    data=heart_train,
-    hidden=c(8,4,2),
-    threshold = 0.001,
-    stepmax = 3000,
-    linear.output = FALSE,
-    act.fct = "logistic"
-)
+col <-c("#FFD2D2", "#CECEFF")
+par(mfrow=c(2,3),cex.main=0.2)
+fourfoldplot(cm_lr$table, color = col, conf.level = 0, margin = 1,main=paste("迴歸(",round(cm_lr$overall[1]*100),"%)",sep=""))
+
+fourfoldplot(cm_ct$table, color = col, conf.level = 0, margin = 1, main=paste("決策樹(",round(cm_ct$overall[1]*100),"%)",sep=""))
+
+fourfoldplot(cm_rf$table, color = col, conf.level = 0, margin = 1, main=paste("隨機森林(",round(cm_rf$overall[1]*100),"%)",sep=""))
+
+fourfoldplot(cm_knn$table, color = col, conf.level = 0, margin = 1, main=paste("KNN (",round(cm_knn$overall[1]*100), "%)",sep=""))
+
+fourfoldplot(cm_svm$table, color = col, conf.level = 0, margin = 1, main=paste("SVM(",round(cm_svm$overall[1]*100),"%)", sep=""))
+
+
 
 ```
 
-```{R}
-plot(model,rep = "best")
-```
 
-```{R}
-pred <- predict(model, heart_test)
-labels <- c("0", "1")
-prediction_label <- data.frame(max.col(pred)) %>%     
-mutate(pred=labels[max.col.pred.]) %>%
-select(2) %>%
-unlist()
-
-table(heart_test$output, prediction_label)
-```
 
